@@ -61,7 +61,15 @@ pub fn start() {
                     let mut session = Session::new(doc);
                     session.system_region = region;
                     let messages = Rc::new(RefCell::new(Vec::new()));
-                    let mut app = WordApp::new(session, services(inbox.clone(), cc.egui_ctx.clone(), dirty, saves.clone(), messages.clone()));
+                    // `?nc=<path>`: open that file from Nextcloud and save it back there (fork SHP-ART).
+                    let nextcloud = Rc::new(RefCell::new(crate::nextcloud::path_from_query(&query())));
+                    if let Some(path) = nextcloud.borrow().clone() {
+                        open_from_nextcloud(path, inbox.clone(), cc.egui_ctx.clone(), messages.clone());
+                    }
+                    let mut app = WordApp::new(
+                        session,
+                        services(inbox.clone(), cc.egui_ctx.clone(), dirty, saves.clone(), messages.clone(), nextcloud.clone()),
+                    );
                     // Pasted pictures wait apart from dropped files: the app inserts one only when the page is the edit target (#1349).
                     app.services.pasted = Some(pasted);
                     app.autosave = false;
@@ -206,11 +214,19 @@ fn listen_for_pasted_pictures(inbox: Inbox, ctx: egui::Context) -> Result<(), St
 }
 
 /// `dirty` is the flag the `beforeunload` guard reads ([`guard_unload`]).
-fn services(inbox: Inbox, ctx: egui::Context, dirty: Rc<Cell<bool>>, saves: AsyncSaves, messages: Rc<RefCell<Vec<String>>>) -> Services {
+fn services(
+    inbox: Inbox,
+    ctx: egui::Context,
+    dirty: Rc<Cell<bool>>,
+    saves: AsyncSaves,
+    messages: Rc<RefCell<Vec<String>>>,
+    nextcloud: Rc<RefCell<Option<String>>>,
+) -> Services {
     let open_inbox = inbox.clone();
     let save_ctx = ctx.clone();
     let font_ctx = ctx.clone();
     let font_messages = messages.clone();
+    let save_messages = messages.clone();
     Services {
         open_async: Some(Box::new(move |purpose: &str| {
             let inbox = open_inbox.clone();
@@ -246,7 +262,13 @@ fn services(inbox: Inbox, ctx: egui::Context, dirty: Rc<Cell<bool>>, saves: Asyn
         // Exports ask for a name; the browser decides where the download goes.
         pick_save: Some(Box::new(|name: &str| Some(name.to_string()))),
         async_saves: Some(saves.clone()),
-        download: Some(Box::new(move |path: &str, bytes: &[u8]| download(&saves, &save_ctx, path, bytes))),
+        download: Some(Box::new(move |path: &str, bytes: &[u8]| {
+            // File › Save of a file opened from Nextcloud writes it back there; other names download.
+            match crate::nextcloud::save_target(nextcloud.borrow().as_deref(), path) {
+                Some(target) => save_to_nextcloud(&saves, &save_ctx, &save_messages, target, bytes),
+                None => download(&saves, &save_ctx, path, bytes),
+            }
+        })),
         print: Some(Box::new(print_pdf)),
         inbox: Some(inbox),
         on_dirty: Some(Box::new(move |d| dirty.set(d))),
@@ -620,4 +642,64 @@ fn mime_for(name: &str) -> &'static str {
         Some("xml") => "application/xml",
         _ => "application/octet-stream",
     }
+}
+
+/// Load `path` through the Nextcloud passage into the inbox, as if it had been picked.
+fn open_from_nextcloud(path: String, inbox: Inbox, ctx: egui::Context, messages: Rc<RefCell<Vec<String>>>) {
+    wasm_bindgen_futures::spawn_local(async move {
+        let result: Result<Vec<u8>, String> = async {
+            let window = web_sys::window().ok_or("no window")?;
+            let resp: web_sys::Response = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(&crate::nextcloud::url_for(&path)))
+                .await
+                .map_err(|e| format!("{e:?}"))?
+                .dyn_into()
+                .map_err(|_| "no response".to_string())?;
+            if !resp.ok() {
+                return Err(format!("HTTP {}", resp.status()));
+            }
+            let buf = wasm_bindgen_futures::JsFuture::from(resp.array_buffer().map_err(|e| format!("{e:?}"))?).await.map_err(|e| format!("{e:?}"))?;
+            Ok(js_sys::Uint8Array::new(&buf).to_vec())
+        }
+        .await;
+        match result {
+            Ok(bytes) => {
+                let name = crate::nextcloud::file_name(&path).to_string();
+                inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name, bytes));
+                messages.borrow_mut().push(format!("Aus Nextcloud geöffnet: {path}. Speichern schreibt die Datei dorthin zurück."));
+            }
+            Err(e) => {
+                log::error!("couldn't load {path} from Nextcloud: {e}");
+                messages.borrow_mut().push(format!("Konnte {path} nicht aus Nextcloud laden ({e})."));
+            }
+        }
+        ctx.request_repaint();
+    });
+}
+
+/// Write `bytes` to `path` in Nextcloud (HTTP PUT through the passage). The document counts as saved
+/// only when Nextcloud confirms; a failure keeps it unsaved and says why.
+fn save_to_nextcloud(saves: &AsyncSaves, ctx: &egui::Context, messages: &Rc<RefCell<Vec<String>>>, path: String, bytes: &[u8]) -> Result<(), String> {
+    let window = web_sys::window().ok_or("no window")?;
+    let init = web_sys::RequestInit::new();
+    init.set_method("PUT");
+    init.set_body(&js_sys::Uint8Array::from(bytes).into());
+    let prom = window.fetch_with_str_and_init(&crate::nextcloud::url_for(&path), &init);
+    let saves = saves.clone();
+    let ctx = ctx.clone();
+    let messages = messages.clone();
+    let ticket = saves.start();
+    wasm_bindgen_futures::spawn_local(async move {
+        let outcome = match wasm_bindgen_futures::JsFuture::from(prom).await.map(|r| r.dyn_into::<web_sys::Response>()) {
+            Ok(Ok(resp)) if resp.ok() => {
+                messages.borrow_mut().push(format!("In Nextcloud gespeichert: {path}"));
+                SaveOutcome::Saved
+            }
+            Ok(Ok(resp)) => SaveOutcome::Failed(format!("Nextcloud hat das Speichern abgelehnt (HTTP {})", resp.status())),
+            Ok(Err(_)) => SaveOutcome::Failed("Nextcloud: keine Antwort".into()),
+            Err(e) => SaveOutcome::Failed(format!("Nextcloud nicht erreichbar: {e:?}")),
+        };
+        saves.finish(ticket, outcome);
+        ctx.request_repaint();
+    });
+    Ok(())
 }
