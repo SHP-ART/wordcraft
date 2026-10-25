@@ -62,7 +62,8 @@ pub fn start() {
                     session.system_region = region;
                     let messages = Rc::new(RefCell::new(Vec::new()));
                     // `?nc=<path>`: open that file from Nextcloud and save it back there (fork SHP-ART).
-                    let nextcloud = Rc::new(RefCell::new(crate::nextcloud::path_from_query(&query())));
+                    let q = query();
+                    let nextcloud = Rc::new(RefCell::new(crate::nextcloud::path_from_query(&q)));
                     if let Some(path) = nextcloud.borrow().clone() {
                         open_from_nextcloud(path, inbox.clone(), cc.egui_ctx.clone(), messages.clone());
                     }
@@ -90,7 +91,9 @@ pub fn start() {
                     }
                     let prefs = crate::prefs::PrefsSync::new(stored);
                     // No document to show: start on File › Home, as the desktop app does (#766).
-                    if !sample {
+                    // When opened for a Nextcloud path (?nc=...), keep the editor open so the blank
+                    // document keeps its cloud path and File › Save writes back there (fork SHP-ART).
+                    if !sample && nextcloud.borrow().is_none() {
                         app.start_screen();
                     }
                     Ok(Box::new(WebShell { app, inbox, messages, prefs }))
