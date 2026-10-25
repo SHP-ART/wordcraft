@@ -564,6 +564,9 @@ pub struct WordApp {
     desktop_theme: desktop_theme::DesktopTheme,
     /// The last answer [`desktop_theme`] gave, so a frame that asks costs nothing.
     desktop_dark: Option<bool>,
+    /// Web: the full Nextcloud path from `?nc=...` when this document was opened from Nextcloud.
+    /// Used so File › Save writes back to the same cloud path even when the saved name matches.
+    pub nextcloud_path: Option<String>,
     /// The interface language whose editing language the session last got ([`i18n::Lang::editing_lang`]).
     applied_editing: Option<i18n::Lang>,
     /// What the system last said about its animation effects ([`Services::animations_enabled`]).
@@ -693,6 +696,7 @@ impl WordApp {
             sent_title: String::new(),
             sent_full_screen: false,
             seen_full_screen: None,
+            nextcloud_path: None,
             escape_free: false,
             quit_requested: false,
             autosave: true,
@@ -2353,6 +2357,13 @@ impl WordApp {
             };
             if r.is_ok() {
                 self.ui.backstage = false;
+                // A file opened from Nextcloud via ?nc=... was fed through the inbox under its file
+                // name only; make session.path the full cloud path so File › Save writes back there.
+                if let Some(nc) = &self.nextcloud_path
+                    && std::path::Path::new(nc).file_name().map(|n| n.to_string_lossy().to_string()) == Some(name)
+                {
+                    self.session.path = Some(nc.into());
+                }
             }
         }
     }
@@ -6006,6 +6017,47 @@ mod tests {
         assert!(a.session.dirty);
         let msg = a.status_msg.as_ref().map(|(m, _)| m.clone()).unwrap_or_default();
         assert!(msg.contains("blocked by the browser"), "the status bar says why: {msg:?}");
+    }
+
+    /// A file opened from the web (via inbox / ?nc=) keeps its file name so File › Save writes back
+    /// to the same Nextcloud path instead of falling back to a download under a default name.
+    #[test]
+    fn web_save_uses_opened_file_name_from_inbox() {
+        let dir = scratch("web-save-name");
+        let path = docx_on_disk(&dir, "Nextcloud content");
+        let bytes = std::fs::read(&path).unwrap();
+        let data = wordcraft_engine::cmd::insert::base64_encode(&bytes);
+        let mut a = app();
+        let saved_name = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let sn = saved_name.clone();
+        a.services.download = Some(Box::new(move |name: &str, _bytes: &[u8]| {
+            *sn.borrow_mut() = Some(name.to_string());
+            Ok(())
+        }));
+        // This is how drain_inbox opens a file dropped or fetched from Nextcloud.
+        a.run("file.open", json!({"path": "Bericht.docx", "data": data})).unwrap();
+        a.execute("file.save", json!({})).unwrap();
+        assert_eq!(saved_name.borrow().as_deref(), Some("Bericht.docx"), "save should use the opened file's name");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A file delivered through the web inbox when the app knows the full Nextcloud path gets that
+    /// full path as its session path, so the web shell's save_target matches and writes back.
+    #[test]
+    fn web_inbox_from_nextcloud_sets_full_cloud_path() {
+        let dir = scratch("web-nc-path");
+        let path = docx_on_disk(&dir, "Nextcloud content");
+        let bytes = std::fs::read(&path).unwrap();
+        let mut a = app();
+        a.nextcloud_path = Some("Ausarbeitungen/Bericht.docx".into());
+        a.services.inbox = Some(Inbox::default());
+        a.services.inbox.as_ref().unwrap().lock().unwrap().push(("Bericht.docx".into(), bytes));
+        a.drain_inbox();
+        assert_eq!(
+            a.session.path.as_deref().map(std::path::Path::new).and_then(|p| p.to_str()),
+            Some("Ausarbeitungen/Bericht.docx")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// #1315: a web app whose `download` hands the save to the browser's picker, which finishes

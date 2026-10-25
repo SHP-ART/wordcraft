@@ -70,6 +70,12 @@ pub fn start() {
                         session,
                         services(inbox.clone(), cc.egui_ctx.clone(), dirty, saves.clone(), messages.clone(), nextcloud.clone()),
                     );
+                    app.nextcloud_path = nextcloud.borrow().clone();
+                    // Whether the file exists or not, remember the cloud path so File › Save can
+                    // write back to Nextcloud under the same name.
+                    if let Some(path) = nextcloud.borrow().as_deref() {
+                        app.session.path = Some(std::path::PathBuf::from(path));
+                    }
                     // Pasted pictures wait apart from dropped files: the app inserts one only when the page is the edit target (#1349).
                     app.services.pasted = Some(pasted);
                     app.autosave = false;
@@ -265,8 +271,14 @@ fn services(
         download: Some(Box::new(move |path: &str, bytes: &[u8]| {
             // File › Save of a file opened from Nextcloud writes it back there; other names download.
             match crate::nextcloud::save_target(nextcloud.borrow().as_deref(), path) {
-                Some(target) => save_to_nextcloud(&saves, &save_ctx, &save_messages, target, bytes),
-                None => download(&saves, &save_ctx, path, bytes),
+                Some(target) => {
+                    save_messages.borrow_mut().push(format!("Speichere in Nextcloud: {target}"));
+                    save_to_nextcloud(&saves, &save_ctx, &save_messages, target, bytes)
+                }
+                None => {
+                    save_messages.borrow_mut().push("Speichern als Download (kein Nextcloud-Bezug)".into());
+                    download(&saves, &save_ctx, path, bytes)
+                }
             }
         })),
         print: Some(Box::new(print_pdf)),
@@ -647,25 +659,32 @@ fn mime_for(name: &str) -> &'static str {
 /// Load `path` through the Nextcloud passage into the inbox, as if it had been picked.
 fn open_from_nextcloud(path: String, inbox: Inbox, ctx: egui::Context, messages: Rc<RefCell<Vec<String>>>) {
     wasm_bindgen_futures::spawn_local(async move {
-        let result: Result<Vec<u8>, String> = async {
+        let result: Result<Option<Vec<u8>>, String> = async {
             let window = web_sys::window().ok_or("no window")?;
             let resp: web_sys::Response = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(&crate::nextcloud::url_for(&path)))
                 .await
                 .map_err(|e| format!("{e:?}"))?
                 .dyn_into()
                 .map_err(|_| "no response".to_string())?;
+            let status = resp.status();
+            if status == 404 {
+                return Ok(None);
+            }
             if !resp.ok() {
-                return Err(format!("HTTP {}", resp.status()));
+                return Err(format!("HTTP {}", status));
             }
             let buf = wasm_bindgen_futures::JsFuture::from(resp.array_buffer().map_err(|e| format!("{e:?}"))?).await.map_err(|e| format!("{e:?}"))?;
-            Ok(js_sys::Uint8Array::new(&buf).to_vec())
+            Ok(Some(js_sys::Uint8Array::new(&buf).to_vec()))
         }
         .await;
         match result {
-            Ok(bytes) => {
+            Ok(Some(bytes)) => {
                 let name = crate::nextcloud::file_name(&path).to_string();
                 inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name, bytes));
                 messages.borrow_mut().push(format!("Aus Nextcloud geöffnet: {path}. Speichern schreibt die Datei dorthin zurück."));
+            }
+            Ok(None) => {
+                messages.borrow_mut().push(format!("Neue Datei in Nextcloud: {path}. Speichern legt sie dort an."));
             }
             Err(e) => {
                 log::error!("couldn't load {path} from Nextcloud: {e}");
