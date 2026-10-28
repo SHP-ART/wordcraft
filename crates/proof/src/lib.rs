@@ -39,8 +39,10 @@
 //!   `es_UY`, with fallbacks; not bundled), dictionary-driven suggestions, Uruguayan `vos` forms,
 //!   and generic checks plus the opening `¿`/`¡` with Spanish messages. Hyphenation uses the
 //!   existing English fallback.
-//! - **German** ([`ProofLang::De`]): hyphenation by `hyph-utf8`'s German patterns (reformed
-//!   spelling, MIT); no spelling or grammar marks yet.
+//! - **German** ([`ProofLang::De`], module [`de`]): spelling against the installed Hunspell
+//!   `de_DE_frami` dictionary (not bundled), with compounds and `CHECKSHARPS` handled by
+//!   `spellbook`; hyphenation by `hyph-utf8`'s German patterns (reformed spelling, MIT). No
+//!   German grammar rules yet.
 //! - **Other languages** ([`ProofLang::Other`]): no spelling or grammar marks, like Word without
 //!   the language's proofing tools.
 //! - **Hyphenation** ([`hyphen`]): dictionary, Liang patterns (English, Polish, Portuguese,
@@ -52,6 +54,7 @@
 pub mod affix;
 pub mod bg;
 pub mod cs;
+pub mod de;
 pub mod dict;
 pub mod en_variants;
 pub mod es;
@@ -166,6 +169,7 @@ pub fn set_dictionaries_folder(dir: Option<std::path::PathBuf>) {
     pt::reload_dictionary();
     it::reload_dictionary();
     hr::reload_dictionary();
+    de::reload_dictionary();
     tr::reload_dictionary();
     ru::reload_dictionary();
     cs::reload_dictionary();
@@ -190,6 +194,7 @@ pub fn installed_dictionaries() -> Vec<(ProofLang, Option<std::path::PathBuf>)> 
         (ProofLang::EsMx, es::installed_path(ProofLang::EsMx)),
         (ProofLang::Es419, es::installed_path(ProofLang::Es419)),
         (ProofLang::EsUy, es::installed_path(ProofLang::EsUy)),
+        (ProofLang::De, de::installed_path()),
     ]
 }
 
@@ -202,6 +207,7 @@ pub fn dictionary_load_error(lang: ProofLang) -> Option<String> {
         ProofLang::Pt => "pt_BR",
         ProofLang::It => "it_IT",
         ProofLang::Hr => "hr_HR",
+        ProofLang::De => "de_DE_frami",
         ProofLang::Tr => "tr_TR",
         ProofLang::Id => "id_ID",
         ProofLang::Es | ProofLang::EsMx | ProofLang::Es419 | ProofLang::EsUy => es::dictionary_name(lang),
@@ -210,8 +216,13 @@ pub fn dictionary_load_error(lang: ProofLang) -> Option<String> {
     hunspell::load_error(key).map(|(_, reason)| reason)
 }
 
-/// A number that changes whenever a word is added to or removed from the user dictionary, or the
-/// dictionaries folder changes.
+/// Text must be checked again because a dictionary was installed (the web shell's German one).
+pub fn dictionaries_changed() {
+    DICTIONARY_GENERATION.fetch_add(1, Ordering::Relaxed);
+}
+
+/// A number that changes whenever a word is added to or removed from the user dictionary, a
+/// dictionary is installed, or the dictionaries folder changes.
 pub fn dictionary_generation() -> u64 {
     DICTIONARY_GENERATION.load(Ordering::Relaxed)
 }
@@ -443,6 +454,7 @@ fn dictionary_loaded(lang: ProofLang) -> Option<bool> {
         ProofLang::Pt => pt::has_dictionary(),
         ProofLang::It => it::has_dictionary(),
         ProofLang::Hr => hr::has_dictionary(),
+        ProofLang::De => de::has_dictionary(),
         ProofLang::Tr => tr::has_dictionary(),
         ProofLang::Ru => ru::has_dictionary(),
         ProofLang::Cs => cs::has_dictionary(),
@@ -461,6 +473,7 @@ fn dictionary_needed(lang: ProofLang, installed: bool) -> Option<&'static str> {
         ProofLang::Pt => Some("pt_BR"),
         ProofLang::It => Some("it_IT"),
         ProofLang::Hr => Some("hr_HR"),
+        ProofLang::De => Some("de_DE_frami"),
         ProofLang::Tr => Some("tr_TR"),
         ProofLang::Ru => Some("ru_RU"),
         ProofLang::Cs => Some("cs_CZ"),
@@ -742,6 +755,7 @@ fn spelling_issue(text: &str, a: usize, b: usize, lang: ProofLang, opts: &Option
     let message = match lang {
         ProofLang::Pl => "Możliwy błąd pisowni",
         ProofLang::Hr => "Moguća pravopisna pogreška",
+        ProofLang::De => "Möglicher Rechtschreibfehler",
         ProofLang::Pt => "Possível erro de ortografia",
         ProofLang::It => "Possibile errore di ortografia",
         ProofLang::Tr => "Olası yazım hatası",
@@ -778,6 +792,7 @@ pub fn is_correct_in_with(word: &str, lang: ProofLang, opts: &Options) -> bool {
         ProofLang::En | ProofLang::EnGb | ProofLang::EnCa => is_correct_english(word, lang, opts),
         ProofLang::Pl => accepted_by_options(word, opts) || pl::is_correct_with_options(word, opts),
         ProofLang::Hr => accepted_by_options(word, opts) || hr::is_correct_with_options(word, opts),
+        ProofLang::De => accepted_by_options(word, opts) || de::is_correct_with_options(word, opts),
         ProofLang::Pt => accepted_by_options(word, opts) || pt::is_correct_with_options(word, opts),
         ProofLang::It => accepted_by_options(word, opts) || it::is_correct_with_options(word, opts),
         ProofLang::Tr => accepted_by_options(word, opts) || tr::is_correct(word),
@@ -787,7 +802,7 @@ pub fn is_correct_in_with(word: &str, lang: ProofLang, opts: &Options) -> bool {
         }
         ProofLang::Cs => accepted_by_options(word, opts) || cs::is_correct_with_options(word, opts),
         ProofLang::Id => accepted_by_options(word, opts) || id::is_correct_with_options(word, opts),
-        ProofLang::Bg | ProofLang::De | ProofLang::Other => true,
+        ProofLang::Bg | ProofLang::Other => true,
     }
 }
 
@@ -799,6 +814,7 @@ pub fn suggest_in(word: &str, max: usize, lang: ProofLang) -> Vec<String> {
         ProofLang::En | ProofLang::EnGb | ProofLang::EnCa => suggest_english(word, max, lang),
         ProofLang::Pl => pl::suggest(word, max),
         ProofLang::Hr => hr::suggest(word, max),
+        ProofLang::De => de::suggest(word, max),
         ProofLang::Pt => pt::suggest(word, max),
         ProofLang::It => it::suggest(word, max),
         ProofLang::Tr => tr::suggest(word, max),
@@ -806,7 +822,7 @@ pub fn suggest_in(word: &str, max: usize, lang: ProofLang) -> Vec<String> {
         ProofLang::Cs => cs::suggest(word, max),
         ProofLang::Id => id::suggest(word, max),
         ProofLang::Es | ProofLang::EsMx | ProofLang::Es419 | ProofLang::EsUy => es::suggest(word, max, lang),
-        ProofLang::Bg | ProofLang::De | ProofLang::Other => Vec::new(),
+        ProofLang::Bg | ProofLang::Other => Vec::new(),
     }
 }
 
@@ -1037,6 +1053,8 @@ mod tests {
             (ProofLang::EsMx, "es_MX"),
             (ProofLang::Es419, "es_419"),
             (ProofLang::EsUy, "es_UY"),
+            // Fork SHP-ART: German reads LibreOffice's de_DE_frami.
+            (ProofLang::De, "de_DE_frami"),
         ] {
             assert_eq!(dictionary_needed(l, false), Some(name), "{l:?}");
             assert_eq!(dictionary_needed(l, true), None, "{l:?}");
@@ -1046,7 +1064,7 @@ mod tests {
             let english = matches!(l, ProofLang::En | ProofLang::EnGb | ProofLang::EnCa);
             assert_eq!(dictionary_needed(l, false).is_some(), !english, "{l:?}");
         }
-        for l in [ProofLang::En, ProofLang::Bg, ProofLang::De, ProofLang::Other] {
+        for l in [ProofLang::En, ProofLang::Bg, ProofLang::Other] {
             assert_eq!(dictionary_needed(l, false), None);
         }
         // Installed dictionaries and the built-in English list: no hint.
@@ -1084,6 +1102,7 @@ mod tests {
             ("es_MX", es::test_dict::AFF, es::test_dict::DIC_AMERICAS),
             ("es_419", es::test_dict::AFF, es::test_dict::DIC_AMERICAS),
             ("es_UY", es::test_dict::AFF, es::test_dict::DIC_AMERICAS),
+            ("de_DE_frami", de::test_dict::AFF, de::test_dict::DIC),
         ] {
             std::fs::write(dir.join(format!("{name}.aff")), aff).unwrap();
             std::fs::write(dir.join(format!("{name}.dic")), dic).unwrap();
@@ -1107,6 +1126,7 @@ mod tests {
                 (ProofLang::EsMx, Some(dir.join("es_MX.dic"))),
                 (ProofLang::Es419, Some(dir.join("es_419.dic"))),
                 (ProofLang::EsUy, Some(dir.join("es_UY.dic"))),
+                (ProofLang::De, Some(dir.join("de_DE_frami.dic"))),
             ]
         );
         assert_eq!(
@@ -1683,7 +1703,7 @@ mod tests {
         for l in [None, Some(""), Some("  "), Some("en"), Some("en-US"), Some("en-GB"), Some("EN-us"), Some("en_US")] {
             assert!(has_dictionary(l), "{l:?}");
         }
-        for l in [Some("lt-LT"), Some("fr-FR"), Some("de"), Some("uk"), Some("-US"), Some("e")] {
+        for l in [Some("lt-LT"), Some("fr-FR"), Some("uk"), Some("-US"), Some("e")] {
             assert!(!has_dictionary(l), "{l:?}");
         }
         // The gate follows the dictionaries, not English: every proofed language is proofed.

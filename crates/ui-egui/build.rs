@@ -13,7 +13,9 @@
 //!   `craft-i18n.rev`): `craft_i18n.rs` holds `CRAFT_I18N`, one (locale, shared catalog, WordCraft
 //!   catalog) entry per locale that has a `wordcraft.tsv`. Unset, or not a checkout (a warning),
 //!   it is empty and the interface is English only; with `CRAFT_I18N_REQUIRED=1` (releases) that
-//!   is an error instead. Recipe: craft-i18n's `docs/integration.md`.
+//!   is an error instead. `CRAFT_I18N_REQUIRE_DE=1` additionally rejects a catalog set without
+//!   `locales/de/wordcraft.tsv`, as required for the office release. Recipe: craft-i18n's
+//!   `docs/integration.md`.
 
 use std::fmt::Write as _;
 
@@ -44,7 +46,9 @@ const APP_CATALOG: &str = "wordcraft.tsv";
 fn craft_i18n() -> String {
     println!("cargo::rerun-if-env-changed=CRAFT_I18N_DIR");
     println!("cargo::rerun-if-env-changed=CRAFT_I18N_REQUIRED");
+    println!("cargo::rerun-if-env-changed=CRAFT_I18N_REQUIRE_DE");
     let required = std::env::var("CRAFT_I18N_REQUIRED").is_ok_and(|v| v.trim() == "1");
+    let require_de = std::env::var("CRAFT_I18N_REQUIRE_DE").is_ok_and(|v| v.trim() == "1");
     let entries = match std::env::var_os("CRAFT_I18N_DIR").filter(|d| !d.is_empty()) {
         // Not canonicalized: on Windows that gives `\\?\C:\…`, which `include_str!` can't read.
         Some(dir) => match locales(&std::path::PathBuf::from(dir).join("locales")) {
@@ -62,6 +66,9 @@ fn craft_i18n() -> String {
             Vec::new()
         }
     };
+    if require_de && !entries.iter().any(|(code, _, _)| code == "de") {
+        println!("cargo::error=CRAFT_I18N_REQUIRE_DE=1 but locales/de/{APP_CATALOG} is missing: the office release must embed the German catalog");
+    }
     let mut o = String::from("/// (locale, shared catalog, WordCraft's catalog), one entry per locale; `\"\"` for a missing file.\n");
     o.push_str("pub static CRAFT_I18N: &craft_i18n::Embedded = &[\n");
     for (code, shared, app) in entries {

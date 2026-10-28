@@ -99,7 +99,8 @@ pub static LANGUAGES: [LangInfo; 27] = [
     LangInfo { code: "et", prefer_hans: false, editing_lang: None },
     // German, neutral across Germany, Austria and Switzerland; `de`, `de-DE`, `de-AT`, `de-CH` …
     // resolve here.
-    LangInfo { code: "de", prefer_hans: false, editing_lang: None },
+    // German; new documents are written in German (fork SHP-ART: `ProofLang::De` has a dictionary).
+    LangInfo { code: "de", prefer_hans: false, editing_lang: Some("de-DE") },
     // Russian; `ru`, `ru-RU`, `ru_RU.UTF-8` and other regions resolve here.
     LangInfo { code: "ru", prefer_hans: false, editing_lang: None },
     LangInfo { code: "tr", prefer_hans: false, editing_lang: Some("tr-TR") },

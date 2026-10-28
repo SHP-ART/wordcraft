@@ -12,6 +12,8 @@ workspace = true
 log = { workspace = true }
 miniz_oxide = "0.8"
 unicode-normalization = "0.1"
+# Fork SHP-ART: full Hunspell (compounds, CHECKSHARPS) for German, which `affix` does not implement.
+spellbook = "0.4.2"
 
 [dev-dependencies]
 proptest = { workspace = true }

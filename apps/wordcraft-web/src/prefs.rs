@@ -19,6 +19,7 @@ pub fn restore(app: &mut WordApp, stored: Option<&str>) {
     {
         app.apply_prefs(ui);
     }
+    app.ui.language = "de".into();
 }
 
 /// Tracks what was last written, so the store is written only when a preference changed.
@@ -33,7 +34,12 @@ pub struct PrefsSync {
 impl PrefsSync {
     /// Starts from what is already stored, so restoring doesn't write it straight back.
     pub fn new(stored: Option<String>) -> Self {
-        Self { last: stored, host_author: None }
+        let last = stored.map(|stored| {
+            let Some(mut ui) = UiState::from_json(stored.as_bytes()) else { return stored };
+            ui.language = "de".into();
+            serde_json::to_string(&ui).unwrap_or(stored)
+        });
+        Self { last, host_author: None }
     }
 
     /// The session signs with `host`, a host page's name for the user, but `own` stays the
@@ -99,6 +105,32 @@ mod tests {
         let mut next = app();
         restore(&mut next, Some(&json));
         assert_eq!(next.session.author, "Rob Hones");
+    }
+
+    #[test]
+    fn german_is_the_web_default_even_with_stored_english() {
+        let mut fresh = app();
+        restore(&mut fresh, None);
+        assert_eq!(fresh.ui.language, "de");
+
+        let mut english = app();
+        english.run("ui.language", json!({"value": "en"})).unwrap();
+        let stored = serde_json::to_string(&english.ui).unwrap();
+        let mut reloaded = app();
+        restore(&mut reloaded, Some(&stored));
+        assert_eq!(reloaded.ui.language, "de");
+    }
+
+    #[test]
+    fn stored_automatic_language_uses_german_web_default() {
+        let previous = app();
+        assert_eq!(previous.ui.language, wordcraft_ui_egui::i18n::AUTO);
+        let stored = serde_json::to_string(&previous.ui).unwrap();
+
+        let mut reloaded = app();
+        restore(&mut reloaded, Some(&stored));
+
+        assert_eq!(reloaded.ui.language, "de");
     }
 
     /// #2132: dark mode chosen on one visit is there after a reload.

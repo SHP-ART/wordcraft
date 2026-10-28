@@ -20,6 +20,8 @@ mod nextcloud;
 mod prefs;
 #[cfg(any(target_arch = "wasm32", test))]
 mod save_fallback;
+#[cfg(any(target_arch = "wasm32", test))]
+mod startup;
 
 #[cfg(target_arch = "wasm32")]
 mod host;

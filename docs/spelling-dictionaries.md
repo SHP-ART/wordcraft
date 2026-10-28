@@ -1,12 +1,13 @@
 # Installing spelling dictionaries
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-23 · **Change:** minor (Spanish: `es_ES`, `es_MX`, `es_419` and `es_UY` with their fallbacks, #3360, #3553; previously trivial: every Hunspell language shows (no dictionary), not only Polish and Portuguese, and Indonesian is listed, #3150; previously trivial: ISO 8859-1 dictionaries are read, #2824)
+> **Last reviewed:** 2026-10-27 · **Last updated:** 2026-10-27 · **Change:** minor (German `de_DE_frami` on desktop and through the SHP-ART fork's `/woerterbuch/` web path; previously minor: Spanish: `es_ES`, `es_MX`, `es_419` and `es_UY` with their fallbacks, #3360, #3553; previously trivial: every Hunspell language shows (no dictionary), not only Polish and Portuguese, and Indonesian is listed, #3150; previously trivial: ISO 8859-1 dictionaries are read, #2824)
 
-English spelling works out of the box. Polish, Russian, Portuguese, Czech, Italian, Croatian,
-Turkish, Indonesian and Spanish spelling use a standard **Hunspell** dictionary (an `.aff` and a `.dic` file) that
-WordCraft reads at runtime. These dictionaries are not bundled: they are large, and several are
-GPL or LGPL licensed. Without one, the language isn't checked. The status bar then shows the
-language with **(no dictionary)**, for example *Português (Brasil) (no dictionary)*.
+English spelling works out of the box. German, Polish, Russian, Portuguese, Czech, Italian,
+Croatian, Turkish, Indonesian and Spanish spelling use a standard **Hunspell** dictionary (an
+`.aff` and a `.dic` file) that WordCraft reads at runtime. These dictionaries are not bundled in
+the desktop app: they are large, and several are GPL or LGPL licensed. Without one, the language
+isn't checked. The status bar then shows the language with **(no dictionary)**, for example
+*Português (Brasil) (no dictionary)*.
 
 If a dictionary is installed but can't be read (an unsupported `SET` encoding, a file over the
 size limit, a parse error), the language isn't checked either, and the status bar shows
@@ -22,6 +23,7 @@ WordCraft looks for the first of these file names (each name means a `<name>.aff
 
 | Language | File names | Common source |
 |---|---|---|
+| German | `de_DE_frami`, `de_DE`, `de-DE`, `de_AT_frami`, `de_CH_frami`, `de` | LibreOffice `dict-de` (`de_DE_frami`, from igerman98) |
 | Polish | `pl_PL`, `pl-PL`, `pl` | SJP.PL |
 | Russian | `ru_RU`, `ru-RU`, `ru` | LibreOffice `dict-ru` |
 | Portuguese (Brazil and Portugal) | `pt_BR`, `pt-BR`, `pt` | VERO (LibreOffice `dict-pt-BR`) |
@@ -36,7 +38,10 @@ WordCraft looks for the first of these file names (each name means a `<name>.aff
 | Spanish (Uruguay) | `es_UY`, `es-UY`, `es_AR`, `es-AR`, `es_419`, `es-419`, `es_ANY`, `es` | LibreOffice `dict-es` (RLA-ES) |
 
 Every Portuguese region uses the same `pt_BR` dictionary, so text marked *Português (Portugal)*
-is checked with it too.
+is checked with it too. German regions use the first German dictionary found; `de_DE_frami`
+provides Hunspell compound rules and `CHECKSHARPS`, so compounds such as
+`Bremsflüssigkeitsprüfung` and the all-capital form `STRASSE` are accepted. German spelling has
+suggestions but no German grammar checks.
 
 Spanish has a dictionary per variety: text marked *Español (España)* uses `es_ES`, *Español
 (México)* `es_MX`, *Español (Uruguay)* `es_UY`, and *Español (Latinoamérica)* and the other
@@ -45,7 +50,8 @@ American one found. LibreOffice's `dict-es` has them all. Uruguayan Spanish also
 `vos` forms of the dictionary's verbs (`tenés`, `vení`, `decime`, `decímelo`).
 
 The files may be UTF-8 or the encoding named on the `.aff`'s `SET` line (ISO 8859-1, ISO 8859-2, KOI8-R
-and Windows-1251 are read as well; the original VERO `pt_BR` is ISO 8859-1).
+and Windows-1251 are read as well; the original VERO `pt_BR` and LibreOffice `de_DE_frami` are
+ISO 8859-1).
 
 ## Where WordCraft looks
 
@@ -63,7 +69,11 @@ The first folder holding a matching pair wins:
 | macOS | `~/Library/Spelling`, `/Library/Spelling`, `/opt/homebrew/share/hunspell`, `/usr/local/share/hunspell`, `/Applications/LibreOffice.app/Contents/Resources/extensions/dict-*` |
 | Linux and BSD | `~/.local/share/hunspell`, `/usr/share/hunspell`, `/usr/share/myspell`, `/usr/share/myspell/dicts`, `/usr/local/share/hunspell`, `/usr/local/share/myspell`, LibreOffice's `share/extensions/dict-*` under `/usr/lib/libreoffice` or `/opt/libreoffice` |
 
-The web version can't read these folders, so these languages aren't spell-checked there.
+The web version can't read these folders. In the SHP-ART fork's office deployment, the web shell
+instead fetches `de_DE_frami.aff` and `de_DE_frami.dic` from `/woerterbuch/` beside `/word/` and
+installs them locally in the running browser. This is a fork-specific server layout, not a
+desktop search path or a dictionary bundled with the upstream web app. If fetching or parsing
+fails, German spelling stays off; there are still no German grammar checks.
 
 ## Example: Brazilian Portuguese (`pt_BR`)
 
@@ -139,6 +149,7 @@ Never commit dictionary files to this repository: they stay on the user's system
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-27 | minor | German spelling uses LibreOffice's `de_DE_frami` from the desktop search paths; the SHP-ART web fork loads the pair from `/woerterbuch/`; German grammar remains unavailable |
 | 2026-10-22 | minor | Spanish (#3360, #3553): the file names for Spain, Mexico, Latin America and Uruguay and their fallbacks |
 | 2026-10-22 | trivial | Italian, Croatian, Turkish, Russian, Czech and Indonesian without a dictionary now show **(no dictionary)** (or **(dictionary unreadable)**) too, as this page already said; before, only Polish and Portuguese did. Indonesian is listed with its file names (#3150) |
 | 2026-10-18 | trivial | ISO 8859-1 (`SET ISO8859-1`) dictionaries are read, so the original VERO `pt_BR` works without converting it to UTF-8 (#2824) |

@@ -66,9 +66,9 @@ pub enum ProofLang {
     /// dictionary (else the neighbouring Rioplatense `es_AR`, a Latin American or a generic one),
     /// and the `vos` forms of verbs (`tenés`, `vení`, `decime`) accepted ([`crate::es::voseo`]).
     EsUy,
-    /// German (`de`, `de-DE`, `de-AT`, `de-CH`…): hyphenation by the German patterns (reformed
-    /// spelling). There is no German dictionary or grammar yet, so, as for [`ProofLang::Other`],
-    /// no spelling or grammar marks.
+    /// German (`de`, `de-DE`, `de-AT`, `de-CH`…): the Hunspell German dictionary (`de_DE_frami`,
+    /// when there is one; fork SHP-ART) and hyphenation by the German patterns (reformed
+    /// spelling). No German grammar rules yet.
     De,
     /// A language without proofing tools here (`fr-FR`, `ja-JP`, `x-none`…). Like Word without
     /// the language's proofing tools: no spelling or grammar marks, so its words are never
@@ -79,7 +79,7 @@ pub enum ProofLang {
 
 impl ProofLang {
     /// Every language with a spelling dictionary, in display order.
-    pub const PROOFED: [ProofLang; 15] = [
+    pub const PROOFED: [ProofLang; 16] = [
         ProofLang::En,
         ProofLang::EnGb,
         ProofLang::EnCa,
@@ -95,6 +95,7 @@ impl ProofLang {
         ProofLang::EsMx,
         ProofLang::Es419,
         ProofLang::EsUy,
+        ProofLang::De,
     ];
 
     /// The proofing language of a BCP 47 tag (`pl-PL`, `en_GB`, `PL`…). The primary subtag
@@ -338,7 +339,7 @@ mod tests {
         for t in ["de", "de-DE", "de-CH", "DE_at", "deu", "ger"] {
             assert_eq!(ProofLang::from_tag(Some(t)), ProofLang::De, "{t}");
         }
-        assert!(!ProofLang::De.is_proofed());
+        assert!(ProofLang::De.is_proofed(), "German has a Hunspell dictionary (fork SHP-ART)");
         for t in ["fr-FR", "dex", "x-none", "ja-JP", "plx", "bgx", "trx", "csx", "idx", "inx", "esx", "spax", "e", "-"] {
             assert_eq!(ProofLang::from_tag(Some(t)), ProofLang::Other, "{t}");
         }

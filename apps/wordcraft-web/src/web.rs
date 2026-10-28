@@ -71,9 +71,12 @@ pub fn start() {
                     // `?nc=<path>`: open that file from Nextcloud and save it back there (fork SHP-ART).
                     let q = query();
                     let nextcloud = Rc::new(RefCell::new(crate::nextcloud::path_from_query(&q)));
+                    let nextcloud_new = Rc::new(RefCell::new(false));
                     if let Some(path) = nextcloud.borrow().clone() {
-                        open_from_nextcloud(path, inbox.clone(), cc.egui_ctx.clone(), messages.clone());
+                        open_from_nextcloud(path, inbox.clone(), cc.egui_ctx.clone(), messages.clone(), nextcloud_new.clone());
                     }
+                    // German spelling (fork SHP-ART): the office server serves LibreOffice's de_DE_frami next to the apps.
+                    load_german_dictionary(cc.egui_ctx.clone());
                     let mut services = services(inbox.clone(), cc.egui_ctx.clone(), dirty, saves.clone(), messages.clone(), nextcloud.clone());
                     if let Some(bridge) = &app_bridge {
                         bridge.connect(&mut services, inbox.clone(), cc.egui_ctx.clone());
@@ -113,7 +116,7 @@ pub fn start() {
                         crate::host::Bridge::set_author(&mut app, &author);
                         prefs.keep_own_author(&app.session.author, &own);
                     }
-                    Ok(Box::new(WebShell { app, inbox, messages, prefs }))
+                    Ok(Box::new(WebShell { app, inbox, messages, prefs, nextcloud_new }))
                 }),
             )
             .await;
@@ -148,6 +151,7 @@ struct WebShell {
     inbox: Inbox,
     messages: Rc<RefCell<Vec<String>>>,
     prefs: crate::prefs::PrefsSync,
+    nextcloud_new: Rc<RefCell<bool>>,
 }
 
 fn local_storage() -> Option<web_sys::Storage> {
@@ -169,6 +173,8 @@ impl eframe::App for WebShell {
             self.app.status(msg);
         }
         self.app.logic(ctx);
+        let confirmed_new = std::mem::take(&mut *self.nextcloud_new.borrow_mut());
+        crate::startup::apply_nextcloud_open_result(&mut self.app, confirmed_new);
         // Store changed preferences straight away: a reload or closed tab runs no exit code (#2132).
         if let Some(json) = self.prefs.changed(&self.app) {
             match local_storage() {
@@ -698,8 +704,61 @@ fn mime_for(name: &str) -> &'static str {
     }
 }
 
+/// Fetch the German Hunspell dictionary from the office server (`/woerterbuch/`, beside `/word/`)
+/// and install it; without it German text simply gets no spelling marks.
+fn load_german_dictionary(ctx: egui::Context) {
+    async fn fetch(url: &str) -> Result<Vec<u8>, String> {
+        let window = web_sys::window().ok_or("no window")?;
+        let resp: web_sys::Response = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(url))
+            .await
+            .map_err(|e| format!("{e:?}"))?
+            .dyn_into()
+            .map_err(|_| "no response".to_string())?;
+        if !resp.ok() {
+            return Err(format!("{url}: HTTP {}", resp.status()));
+        }
+        let limit = wordcraft_engine::proof::de::MAX_FILE_BYTES;
+        if let Some(len) = resp.headers().get("Content-Length").ok().flatten().and_then(|v| v.parse::<u64>().ok())
+            && len > limit
+        {
+            return Err(format!("{url}: Content-Length {len} exceeds {limit} bytes"));
+        }
+        let body = resp.body().ok_or("response has no body")?;
+        let reader = body.get_reader().dyn_into::<web_sys::ReadableStreamDefaultReader>().map_err(|_| "response body is not a readable stream")?;
+        let mut budget = crate::startup::DownloadBudget::new(limit);
+        let mut out = Vec::new();
+        loop {
+            let result = wasm_bindgen_futures::JsFuture::from(reader.read()).await.map_err(|e| format!("{e:?}"))?;
+            let done = js_sys::Reflect::get(&result, &"done".into()).map_err(|e| format!("{e:?}"))?.as_bool().ok_or("chunk has no done flag")?;
+            if done {
+                return Ok(out);
+            }
+            let value = js_sys::Reflect::get(&result, &"value".into()).map_err(|e| format!("{e:?}"))?;
+            let chunk = js_sys::Uint8Array::new(&value);
+            if let Err(e) = budget.record_chunk(u64::from(chunk.length())) {
+                let _ = wasm_bindgen_futures::JsFuture::from(reader.cancel()).await;
+                return Err(format!("{url}: {e}"));
+            }
+            out.extend_from_slice(&chunk.to_vec());
+        }
+    }
+    wasm_bindgen_futures::spawn_local(async move {
+        let result = async {
+            let aff = fetch("../woerterbuch/de_DE_frami.aff").await?;
+            let dic = fetch("../woerterbuch/de_DE_frami.dic").await?;
+            wordcraft_engine::proof::de::install_dictionary_bytes(&aff, &dic)
+        }
+        .await;
+        match result {
+            Ok(()) => log::info!("German dictionary loaded"),
+            Err(e) => log::warn!("German spelling off: {e}"),
+        }
+        ctx.request_repaint();
+    });
+}
+
 /// Load `path` through the Nextcloud passage into the inbox, as if it had been picked.
-fn open_from_nextcloud(path: String, inbox: Inbox, ctx: egui::Context, messages: Rc<RefCell<Vec<String>>>) {
+fn open_from_nextcloud(path: String, inbox: Inbox, ctx: egui::Context, messages: Rc<RefCell<Vec<String>>>, nextcloud_new: Rc<RefCell<bool>>) {
     wasm_bindgen_futures::spawn_local(async move {
         let result: Result<Option<Vec<u8>>, String> = async {
             let window = web_sys::window().ok_or("no window")?;
@@ -726,6 +785,7 @@ fn open_from_nextcloud(path: String, inbox: Inbox, ctx: egui::Context, messages:
                 messages.borrow_mut().push(format!("Aus Nextcloud geöffnet: {path}. Speichern schreibt die Datei dorthin zurück."));
             }
             Ok(None) => {
+                *nextcloud_new.borrow_mut() = true;
                 messages.borrow_mut().push(format!("Neue Datei in Nextcloud: {path}. Speichern legt sie dort an."));
             }
             Err(e) => {

@@ -7315,10 +7315,7 @@ mod tests {
         a.services.inbox = Some(Inbox::default());
         a.services.inbox.as_ref().unwrap().lock().unwrap().push(("Bericht.docx".into(), bytes));
         a.drain_inbox();
-        assert_eq!(
-            a.session.path.as_deref().map(std::path::Path::new).and_then(|p| p.to_str()),
-            Some("Ausarbeitungen/Bericht.docx")
-        );
+        assert_eq!(a.session.path.as_deref().map(std::path::Path::new).and_then(|p| p.to_str()), Some("Ausarbeitungen/Bericht.docx"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
